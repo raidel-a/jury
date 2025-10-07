@@ -79,13 +79,27 @@ interface TokenResponse {
     token: string;
 }
 
+interface CriteriaRating {
+    completion: number;
+    originality: number;
+    learning: number;
+    design: number;
+    technical: number;
+}
+
 interface JudgedProject {
     project_id: string;
-    notes: string;
-    starred: boolean;
     name: string;
     location: number;
     description: string;
+    // Core rating system
+    criteria_rating: CriteriaRating;
+    starred: boolean;
+    comments: string; // Renamed from notes
+    // Calculated and manual ranking
+    calculated_score: number;
+    manual_rank: number;
+    timestamp: number;
 }
 
 type JudgedProjectWithUrl = {
@@ -201,4 +215,23 @@ interface ResetPopup {
 interface GroupInfo {
     names: string[];
     enabled: boolean;
+}
+
+interface RankedProject {
+    id: string;
+    name: string;
+    location: number;
+    calculated_score: number;
+    calculated_rank: number;
+    manual_rank: number;
+    starred: boolean;
+    criteria_rating: CriteriaRating;
+    comments: string;
+}
+
+interface FinishRequest {
+    criteria_rating: CriteriaRating;
+    starred: boolean;
+    comments: string;
+    calculated_score: number;
 }

@@ -43,3 +43,16 @@ type AddProjectRequest struct {
 	VideoLink     string `json:"video_link"`
 	ChallengeList string `json:"challenge_list"`
 }
+
+// FinishRequest for the new criteria-based judging system
+type FinishRequest struct {
+	CriteriaRating  CriteriaRating `json:"criteria_rating"`
+	Starred         bool           `json:"starred"`
+	Comments        string         `json:"comments"`
+	CalculatedScore float64        `json:"calculated_score"`
+}
+
+// RankingUpdateRequest for manual ranking adjustments
+type RankingUpdateRequest struct {
+	Rankings []string `json:"rankings"` // Array of project IDs in desired order
+}

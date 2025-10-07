@@ -262,6 +262,21 @@ func UpdateJudgeStars(db *mongo.Database, ctx context.Context, judgeId primitive
 
 }
 
+// UpdateJudgeCriteria updates the criteria rating and recalculates score for a single seen project
+func UpdateJudgeCriteria(db *mongo.Database, ctx context.Context, judgeId primitive.ObjectID, projIndex int, criteria models.CriteriaRating, starred bool) error {
+	// Calculate new score based on updated criteria
+	calculatedScore := models.CalculateProjectScore(criteria, starred)
+
+	criteriaKey := "seen_projects." + strconv.Itoa(projIndex) + ".criteria_rating"
+	scoreKey := "seen_projects." + strconv.Itoa(projIndex) + ".calculated_score"
+
+	_, err := db.Collection("judges").UpdateOne(ctx, gin.H{"_id": judgeId}, gin.H{"$set": gin.H{
+		criteriaKey: criteria,
+		scoreKey:    calculatedScore,
+	}})
+	return err
+}
+
 // Reset list of projects that judge skipped due to busy
 func ResetBusyProjectListForJudge(db *mongo.Database, ctx context.Context, judge *models.Judge) error {
 	_, err := db.Collection("flags").DeleteMany(ctx, gin.H{

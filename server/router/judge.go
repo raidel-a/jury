@@ -8,6 +8,7 @@ import (
 	"server/judging"
 	"server/models"
 	"server/util"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -460,15 +461,8 @@ type JudgedProjectWithUrl struct {
 
 func addUrlToJudgedProject(project *models.JudgedProject, url string) *JudgedProjectWithUrl {
 	return &JudgedProjectWithUrl{
-		JudgedProject: models.JudgedProject{
-			ProjectId:   project.ProjectId,
-			Name:        project.Name,
-			Location:    project.Location,
-			Description: project.Description,
-			Notes:       project.Notes,
-			Starred:     project.Starred,
-		},
-		Url: url,
+		JudgedProject: *project,
+		Url:           url,
 	}
 }
 
@@ -668,7 +662,7 @@ type JudgeScoreRequest struct {
 	Starred bool   `json:"starred"`
 }
 
-// POST /judge/finish - Endpoint to finish judging a project
+// POST /judge/finish - Endpoint to finish judging a project with criteria-based evaluation
 func JudgeFinish(ctx *gin.Context) {
 	// Get the state from the context
 	state := GetState(ctx)
@@ -676,18 +670,24 @@ func JudgeFinish(ctx *gin.Context) {
 	// Get the judge from the context
 	judge := ctx.MustGet("judge").(*models.Judge)
 
-	// Get the request object
-	var scoreReq JudgeScoreRequest
-	err := ctx.BindJSON(&scoreReq)
+	// Get the request object for criteria-based judging
+	var finishReq models.FinishRequest
+	err := ctx.BindJSON(&finishReq)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "error reading request body: " + err.Error()})
+		return
+	}
+
+	// Validate criteria ratings - all must be 1-5
+	if !models.IsValidCriteriaRating(finishReq.CriteriaRating) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "all criteria ratings must be between 1 and 5"})
 		return
 	}
 
 	// Run remaining actions in a transaction
 	err = database.WithTransaction(state.Db, func(sc mongo.SessionContext) error {
 		// Get the options and return error if deliberations
-		options, err := database.GetOptions(state.Db, ctx)
+		options, err := database.GetOptions(state.Db, sc)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error getting options: " + err.Error()})
 			return err
@@ -704,8 +704,9 @@ func JudgeFinish(ctx *gin.Context) {
 			return err
 		}
 
-		// Create the judged project object
-		judgedProject := models.JudgeProjectFromProject(project, scoreReq.Notes, scoreReq.Starred)
+		// Create the judged project object with criteria rating
+		judgedProject := models.JudgeProjectFromProject(project, finishReq.Comments, finishReq.Starred, finishReq.CriteriaRating)
+		judgedProject.Timestamp = primitive.DateTime(time.Now().UnixMilli())
 
 		// If groups are enabled and auto switch, move the judge to the next group conditionally
 		if options.MultiGroup && options.SwitchingMode == "auto" {
@@ -720,6 +721,16 @@ func JudgeFinish(ctx *gin.Context) {
 		err = database.UpdateAfterSeen(state.Db, sc, judge, judgedProject)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error storing scores in database: " + err.Error()})
+			return err
+		}
+
+		// Auto-generate rankings based on criteria scores
+		judge.AutoGenerateRanking()
+
+		// Update the judge with new rankings
+		err = database.UpdateJudgeRanking(state.Db, sc, judge.Id, judge.Rankings, judge.RankingsAgg)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error updating judge rankings: " + err.Error()})
 			return err
 		}
 
@@ -738,11 +749,14 @@ func JudgeFinish(ctx *gin.Context) {
 
 	// Send OK
 	starred := ""
-	if scoreReq.Starred {
+	if finishReq.Starred {
 		starred = " and starred project"
 	}
 	projId := judge.Current.Hex()
-	state.Logger.JudgeLogf(judge, "Finished judging project %s%s", projId, starred)
+	state.Logger.JudgeLogf(judge, "Finished judging project %s with criteria scores (C:%d, O:%d, L:%d, D:%d, T:%d)%s",
+		projId, finishReq.CriteriaRating.Completion, finishReq.CriteriaRating.Originality,
+		finishReq.CriteriaRating.Learning, finishReq.CriteriaRating.Design,
+		finishReq.CriteriaRating.Technical, starred)
 	ctx.JSON(http.StatusOK, gin.H{"ok": 1})
 }
 
@@ -799,6 +813,105 @@ func JudgeRank(ctx *gin.Context) {
 	// Send OK
 	oldRanks := util.RankingToString(judge.Rankings)
 	state.Logger.JudgeLogf(judge, "Updated rankings from %s to %s", oldRanks, util.RankingToString(rankReq.Ranking))
+	ctx.JSON(http.StatusOK, gin.H{"ok": 1})
+}
+
+// GET /judge/ranking - Get current ranking with criteria scores
+func GetJudgeRanking(ctx *gin.Context) {
+	// Get the judge from the context
+	judge := ctx.MustGet("judge").(*models.Judge)
+
+	// Create ranked project list with criteria details
+	type RankedProject struct {
+		Id               string                     `json:"id"`
+		Name             string                     `json:"name"`
+		Location         int64                      `json:"location"`
+		CalculatedScore  float64                    `json:"calculated_score"`
+		CalculatedRank   int                        `json:"calculated_rank"`
+		ManualRank       int                        `json:"manual_rank"`
+		Starred          bool                       `json:"starred"`
+		CriteriaRating   models.CriteriaRating     `json:"criteria_rating"`
+		Comments         string                     `json:"comments"`
+	}
+
+	rankedProjects := make([]RankedProject, len(judge.SeenProjects))
+	for i, project := range judge.SeenProjects {
+		rankedProjects[i] = RankedProject{
+			Id:              project.ProjectId.Hex(),
+			Name:            project.Name,
+			Location:        project.Location,
+			CalculatedScore: project.CalculatedScore,
+			CalculatedRank:  0, // Will be calculated based on score order
+			ManualRank:      project.ManualRank,
+			Starred:         project.Starred,
+			CriteriaRating:  project.CriteriaRating,
+			Comments:        project.Comments,
+		}
+	}
+
+	// Calculate calculated ranks by sorting by score
+	for i := 0; i < len(rankedProjects); i++ {
+		for k := i + 1; k < len(rankedProjects); k++ {
+			if rankedProjects[k].CalculatedScore > rankedProjects[i].CalculatedScore {
+				rankedProjects[i], rankedProjects[k] = rankedProjects[k], rankedProjects[i]
+			}
+		}
+	}
+	for i := range rankedProjects {
+		rankedProjects[i].CalculatedRank = i + 1
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"projects": rankedProjects})
+}
+
+// POST /judge/ranking - Update manual ranking order
+func UpdateJudgeRanking(ctx *gin.Context) {
+	// Get the state from the context
+	state := GetState(ctx)
+
+	// Get the judge from the context
+	judge := ctx.MustGet("judge").(*models.Judge)
+
+	// Get the request object
+	var rankingReq models.RankingUpdateRequest
+	err := ctx.BindJSON(&rankingReq)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "error reading request body: " + err.Error()})
+		return
+	}
+
+	// Convert string IDs to ObjectIDs and update manual ranks
+	newRankings := make([]primitive.ObjectID, len(rankingReq.Rankings))
+	for i, idStr := range rankingReq.Rankings {
+		objId, err := primitive.ObjectIDFromHex(idStr)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid project ID: " + idStr})
+			return
+		}
+		newRankings[i] = objId
+
+		// Update manual rank in seen projects
+		for j := range judge.SeenProjects {
+			if judge.SeenProjects[j].ProjectId == objId {
+				judge.SeenProjects[j].ManualRank = i + 1
+				break
+			}
+		}
+	}
+
+	// Update rankings
+	judge.Rankings = newRankings
+
+	// Update in database
+	err = database.WithTransaction(state.Db, func(sc mongo.SessionContext) error {
+		return database.UpdateJudgeRanking(state.Db, sc, judge.Id, judge.Rankings, judge.RankingsAgg)
+	})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error updating rankings: " + err.Error()})
+		return
+	}
+
+	state.Logger.JudgeLogf(judge, "Updated manual ranking order")
 	ctx.JSON(http.StatusOK, gin.H{"ok": 1})
 }
 
@@ -908,7 +1021,7 @@ func JudgeUpdateNotes(ctx *gin.Context) {
 	}
 
 	// Update that specific index of the seen projects array
-	judge.SeenProjects[index].Notes = notesReq.Notes
+	judge.SeenProjects[index].Comments = notesReq.Notes
 
 	// Update the judge's object for the project
 	err = database.UpdateJudgeSeenProjects(state.Db, ctx, judge)
@@ -916,6 +1029,67 @@ func JudgeUpdateNotes(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error updating judge score in database: " + err.Error()})
 		return
 	}
+
+	// Send OK
+	ctx.JSON(http.StatusOK, gin.H{"ok": 1})
+}
+
+type UpdateCriteriaRequest struct {
+	CriteriaRating models.CriteriaRating `json:"criteria_rating"`
+}
+
+// PUT /judge/criteria/:id - Update the criteria rating for a judged project
+func JudgeUpdateCriteria(ctx *gin.Context) {
+	// Get the state from the context
+	state := GetState(ctx)
+
+	// Get the judge from the context
+	judge := ctx.MustGet("judge").(*models.Judge)
+
+	// Get the project ID from the URL
+	rawProjectId := ctx.Param("id")
+	projectId, err := primitive.ObjectIDFromHex(rawProjectId)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid project ID"})
+		return
+	}
+
+	// Get the request object
+	var criteriaReq UpdateCriteriaRequest
+	err = ctx.BindJSON(&criteriaReq)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "error reading request body: " + err.Error()})
+		return
+	}
+
+	// Validate criteria ratings
+	if !models.IsValidCriteriaRating(criteriaReq.CriteriaRating) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "all criteria ratings must be between 1 and 5"})
+		return
+	}
+
+	// If the project isn't in the judge's seen projects, return an error
+	index := util.FindSeenProjectIndex(judge, projectId)
+	if index == -1 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "judge hasn't seen project or project is invalid"})
+		return
+	}
+
+	// Get current starred status for score calculation
+	starred := judge.SeenProjects[index].Starred
+
+	// Update the criteria rating in database
+	err = database.UpdateJudgeCriteria(state.Db, ctx, judge.Id, index, criteriaReq.CriteriaRating, starred)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "error updating criteria rating in database: " + err.Error()})
+		return
+	}
+
+	// Log the update
+	state.Logger.JudgeLogf(judge, "Updated criteria rating for project %s (C:%d, O:%d, L:%d, D:%d, T:%d)",
+		rawProjectId, criteriaReq.CriteriaRating.Completion, criteriaReq.CriteriaRating.Originality,
+		criteriaReq.CriteriaRating.Learning, criteriaReq.CriteriaRating.Design,
+		criteriaReq.CriteriaRating.Technical)
 
 	// Send OK
 	ctx.JSON(http.StatusOK, gin.H{"ok": 1})

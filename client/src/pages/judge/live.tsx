@@ -16,7 +16,6 @@ import { getRequest, postRequest } from '../../api';
 import { errorAlert } from '../../util';
 import alarm from '../../assets/alarm.mp3';
 import data from '../../data.json';
-import TextInput from '../../components/TextInput';
 import { Helmet } from 'react-helmet';
 
 const infoPages = ['paused', 'hidden', 'no-projects', 'done', 'doneTrack'];
@@ -48,8 +47,17 @@ const JudgeLive = () => {
     const [stopAudio, setStopAudio] = useState(false);
     const [audioPopupOpen, setAudioPopupOpen] = useState(false);
     const [paused, setPaused] = useState(false);
-    const [notes, setNotes] = useState('');
+    const [comments, setComments] = useState('');
     const [starred, setStarred] = useState(false);
+    const [criteriaRating, setCriteriaRating] = useState<CriteriaRating>({
+        completion: 0,
+        originality: 0,
+        learning: 0,
+        design: 0,
+        technical: 0
+    });
+    const [criteriaValid, setCriteriaValid] = useState(false);
+    const [calculatedScore, setCalculatedScore] = useState(0);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -215,12 +223,26 @@ const JudgeLive = () => {
         if (!audioPopupOpen) noAudio();
     }, [audioPopupOpen]);
 
+    // Calculate score when criteria change
+    useEffect(() => {
+        if (criteriaValid) {
+            // Calculate base score: average of 5 criteria (1-5 scale = 0.2-1.0 normalized)
+            const baseScore = (criteriaRating.completion + criteriaRating.originality +
+                             criteriaRating.learning + criteriaRating.design +
+                             criteriaRating.technical) / 25.0;
+
+            // Star bonus: +0.1 for standout projects
+            const starBonus = starred ? 0.1 : 0;
+
+            setCalculatedScore(baseScore + starBonus);
+        }
+    }, [criteriaRating, starred, criteriaValid]);
+
     // Make timer audio run in a loop
     const audioLoop = () => {
         audio.play();
         audio.addEventListener('ended', () => {
             audio.currentTime = 0;
-            console.log('Audio is done!');
             if (stopAudio) return;
             audioLoop();
         });
@@ -252,12 +274,22 @@ const JudgeLive = () => {
     };
 
     const finishJudging = async () => {
-        const res = await postRequest<OkResponse>('/judge/finish', 'judge', {
-            notes,
+        if (!criteriaValid) {
+            alert('Please rate all 5 criteria before finishing.');
+            return;
+        }
+
+        const finishData: FinishRequest = {
+            criteria_rating: criteriaRating,
             starred,
-        });
+            comments,
+            calculated_score: calculatedScore
+        };
+
+        const res = await postRequest<OkResponse>('/judge/finish', 'judge', finishData);
         if (res.status !== 200) {
             errorAlert(res);
+            return;
         }
 
         navigate('/judge');
@@ -394,7 +426,7 @@ const JudgeLive = () => {
                         <Button
                             type="primary"
                             className="ml-2 py-1 text-xl"
-                            disabled={judge === null || !started || loading}
+                            disabled={judge === null || loading}
                             onClick={() => {
                                 openPopup('vote');
                             }}
@@ -404,26 +436,19 @@ const JudgeLive = () => {
                     </div>
                 </div>
                 {judge.current && <ProjectDisplay judge={judge} projectId={judge.current} />}
-                {/* Dummy div for fixed text input */}
-                <div className="w-full py-2 h-16"></div>
-                <div className="fixed bottom-0 flex justify-center p-2 pt-1 w-full left-0 bg-background border-t-2 border-lightest">
-                    <TextInput
-                        label="Personal notes"
-                        placeholder="Write your notes here..."
-                        text={notes}
-                        setText={setNotes}
-                        className="w-full md:w-[30rem]"
-                    />
-                </div>
                 <FinishPopup
                     enabled={finishPopup}
                     setEnabled={setFinishPopup}
                     judge={judge}
                     callback={finishJudging}
-                    notes={notes}
-                    setNotes={setNotes}
+                    notes={comments}
+                    setNotes={setComments}
                     starred={starred}
                     setStarred={setStarred}
+                    criteriaRating={criteriaRating}
+                    setCriteriaRating={setCriteriaRating}
+                    criteriaValid={criteriaValid}
+                    setCriteriaValid={setCriteriaValid}
                 />
                 <FlagPopup
                     enabled={flagPopup}

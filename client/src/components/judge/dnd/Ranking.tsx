@@ -199,7 +199,7 @@ const Ranking = ({ judge, deliberation }: RankingProps) => {
                 disabled={disabled || deliberation}
             />
 
-            <h2 className="text-primary text-xl font-bold mt-4">Unranked Projects</h2>
+            <h2 className="text-primary text-xl font-bold mt-4">Unviewed Projects</h2>
             <p className="text-light text-sm">
                 Projects will be sorted in reverse chronological order.
             </p>

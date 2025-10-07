@@ -31,12 +31,29 @@ type Judge struct {
 }
 
 type JudgedProject struct {
-	ProjectId   primitive.ObjectID `bson:"project_id" json:"project_id"`
-	Starred     bool               `bson:"starred" json:"starred"`
-	Notes       string             `bson:"notes" json:"notes"`
-	Name        string             `bson:"name" json:"name"`
-	Location    int64              `bson:"location" json:"location"`
-	Description string             `bson:"description" json:"description"`
+	ProjectId       primitive.ObjectID `bson:"project_id" json:"project_id"`
+	Name            string             `bson:"name" json:"name"`
+	Location        int64              `bson:"location" json:"location"`
+	Description     string             `bson:"description" json:"description"`
+
+	// Core rating system
+	CriteriaRating  CriteriaRating     `bson:"criteria_rating" json:"criteria_rating"`
+	Starred         bool               `bson:"starred" json:"starred"`        // Standout projects
+	Comments        string             `bson:"comments" json:"comments"`      // Personal feedback (renamed from Notes)
+
+	// Calculated and manual ranking
+	CalculatedScore float64            `bson:"calculated_score" json:"calculated_score"` // Auto from criteria
+	ManualRank      int                `bson:"manual_rank" json:"manual_rank"`           // Judge's override
+
+	Timestamp       primitive.DateTime `bson:"timestamp" json:"timestamp"`
+}
+
+type CriteriaRating struct {
+	Completion  int `bson:"completion" json:"completion"`   // 1-5: Does the hack work? Did the team achieve everything they wanted?
+	Originality int `bson:"originality" json:"originality"` // 1-5: Has this been done before? How creative is their project?
+	Learning    int `bson:"learning" json:"learning"`       // 1-5: Did the team stretch themselves? Did they try to learn something new?
+	Design      int `bson:"design" json:"design"`           // 1-5: Did the team put thought into the UX? How well-designed was the UI?
+	Technical   int `bson:"technical" json:"technical"`     // 1-5: How technically impressive was the hack? Was the problem tackled difficult?
 }
 
 type AggRanking struct {
@@ -72,14 +89,74 @@ func RandCode() string {
 	return fmt.Sprintf("%d", rand.Intn(90000000)+10000000)
 }
 
-func JudgeProjectFromProject(project *Project, notes string, starred bool) *JudgedProject {
+func JudgeProjectFromProject(project *Project, comments string, starred bool, criteriaRating CriteriaRating) *JudgedProject {
+	calculatedScore := CalculateProjectScore(criteriaRating, starred)
 	return &JudgedProject{
-		ProjectId:   project.Id,
-		Name:        project.Name,
-		Location:    project.Location,
-		Description: project.Description,
-		Notes:       notes,
-		Starred:     starred,
+		ProjectId:       project.Id,
+		Name:            project.Name,
+		Location:        project.Location,
+		Description:     project.Description,
+		CriteriaRating:  criteriaRating,
+		Starred:         starred,
+		Comments:        comments,
+		CalculatedScore: calculatedScore,
+		ManualRank:      0, // Will be set when judge arranges rankings
+		Timestamp:       primitive.DateTime(0),
+	}
+}
+
+// CalculateProjectScore computes the score based on criteria ratings and star status
+func CalculateProjectScore(rating CriteriaRating, starred bool) float64 {
+	// Base score: average of 5 criteria (1-5 scale = 0.2-1.0 normalized)
+	baseScore := float64(rating.Completion+rating.Originality+rating.Learning+
+		rating.Design+rating.Technical) / 25.0 // Normalize to 0-1
+
+	// Star bonus: +0.1 for standout projects
+	starBonus := 0.0
+	if starred {
+		starBonus = 0.1
+	}
+
+	return baseScore + starBonus // Final score 0.2-1.1 range
+}
+
+// IsValidCriteriaRating checks if all criteria are properly rated (1-5)
+func IsValidCriteriaRating(rating CriteriaRating) bool {
+	criteria := []int{rating.Completion, rating.Originality, rating.Learning, rating.Design, rating.Technical}
+	for _, score := range criteria {
+		if score < 1 || score > 5 {
+			return false
+		}
+	}
+	return true
+}
+
+// AutoGenerateRanking creates a ranking based on calculated scores
+func (j *Judge) AutoGenerateRanking() {
+	// Create a copy of seen projects for sorting
+	projects := make([]JudgedProject, len(j.SeenProjects))
+	copy(projects, j.SeenProjects)
+
+	// Sort by calculated score (highest first)
+	for i := 0; i < len(projects); i++ {
+		for k := i + 1; k < len(projects); k++ {
+			if projects[k].CalculatedScore > projects[i].CalculatedScore {
+				projects[i], projects[k] = projects[k], projects[i]
+			}
+		}
+	}
+
+	// Extract project IDs in rank order and update manual ranks
+	j.Rankings = make([]primitive.ObjectID, len(projects))
+	for i, project := range projects {
+		j.Rankings[i] = project.ProjectId
+		// Update manual rank in the original seen projects
+		for k := range j.SeenProjects {
+			if j.SeenProjects[k].ProjectId == project.ProjectId {
+				j.SeenProjects[k].ManualRank = i + 1
+				break
+			}
+		}
 	}
 }
 

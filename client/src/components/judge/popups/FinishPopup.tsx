@@ -1,7 +1,7 @@
 import Button from '../../Button';
 import Popup from '../../Popup';
-import Star from '../Star';
 import TextArea from '../../TextArea';
+import CriteriaRatingForm from '../CriteriaRating';
 
 interface FinishPopupProps {
     /* Function to modify the popup state variable */
@@ -28,6 +28,18 @@ interface FinishPopupProps {
 
     /* Setter function for notes */
     setNotes: React.Dispatch<React.SetStateAction<string>>;
+
+    /* Criteria rating */
+    criteriaRating: CriteriaRating;
+
+    /* Setter for criteria rating */
+    setCriteriaRating: React.Dispatch<React.SetStateAction<CriteriaRating>>;
+
+    /* Criteria validation state */
+    criteriaValid: boolean;
+
+    /* Setter for criteria validation */
+    setCriteriaValid: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 /**
@@ -37,27 +49,51 @@ const FinishPopup = (props: FinishPopupProps) => {
     if (!props.enabled) return null;
 
     const done = async () => {
+        if (!props.criteriaValid) {
+            alert('Please rate all 5 criteria before submitting.');
+            return;
+        }
         await props.callback();
     };
 
     return (
-        <Popup enabled={props.enabled} setEnabled={props.setEnabled} className="text-center">
-            <h1 className="text-3xl font-bold text-primary">Judge Project</h1>
-            <h2 className="text-xl font-bold">Finish judging this project</h2>
-            <div className="flex flex-row justify-center text-left mt-2">
-                <Star active={props.starred} setActive={props.setStarred} className="mr-4" />
-                <p className="text-light">
-                    Star projects you think should win the top places in the hackathon.
-                </p>
+        <Popup enabled={props.enabled} setEnabled={props.setEnabled} className="text-center max-h-[90vh]">
+            <div className="overflow-y-auto max-h-[80vh] pr-2">
+                <h1 className="text-3xl font-bold text-primary">Judge Project</h1>
+
+                <div className="text-left">
+                    <CriteriaRatingForm
+                        rating={props.criteriaRating}
+                        onRatingChange={props.setCriteriaRating}
+                        onValidChange={props.setCriteriaValid}
+                        disabled={false}
+                    />
+
+                    <div className="mt-6 p-4 border rounded-lg bg-gray-400">
+                        <div className="flex items-center mb-4">
+                            <label className="flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={props.starred}
+                                    onChange={(e) => props.setStarred(e.target.checked)}
+                                    className="mr-2 scale-125"
+                                />
+                                <span className="text-lg font-medium">⭐ Mark as standout project</span>
+                            </label>
+                        </div>
+
+                        <h3 className="text-lighter text-sm text-left mb-1">Personal Notes</h3>
+                        <TextArea
+                            label="Type any personal comments here"
+                            value={props.notes}
+                            setValue={props.setNotes}
+                            className='mt-1'
+                        />
+                    </div>
+                </div>
             </div>
-            <h3 className="text-lighter text-sm text-left mt-2">Personal Notes</h3>
-            <TextArea
-                label="Type any personal comments here"
-                value={props.notes}
-                setValue={props.setNotes}
-                className='mt-1'
-            />
-            <Button type="primary" onClick={done} className="mt-4">
+
+            <Button type="primary" onClick={done} className="mt-4" disabled={!props.criteriaValid}>
                 Submit
             </Button>
         </Popup>

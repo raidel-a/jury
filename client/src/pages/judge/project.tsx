@@ -8,12 +8,21 @@ import { getRequest, putRequest } from '../../api';
 import { errorAlert } from '../../util';
 import Star from '../../components/judge/Star';
 import TextArea from '../../components/TextArea';
+import CriteriaRatingForm from '../../components/judge/CriteriaRating';
 
 const Project = () => {
     const { id } = useParams();
     const [project, setProject] = useState<null | JudgedProjectWithUrl>(null);
     const [notes, setNotes] = useState('');
     const [starred, setStarred] = useState(false);
+    const [criteriaRating, setCriteriaRating] = useState<CriteriaRating>({
+        completion: 0,
+        originality: 0,
+        learning: 0,
+        design: 0,
+        technical: 0
+    });
+    const [criteriaValid, setCriteriaValid] = useState(false);
 
     useEffect(() => {
         async function fetchData() {
@@ -24,8 +33,11 @@ const Project = () => {
             }
             const proj = projRes.data as JudgedProjectWithUrl;
             setProject(proj);
-            setNotes(proj.notes);
+            setNotes(proj.comments || '');
             setStarred(proj.starred);
+            if (proj.criteria_rating) {
+                setCriteriaRating(proj.criteria_rating);
+            }
         }
 
         fetchData();
@@ -62,6 +74,29 @@ const Project = () => {
         }
     };
 
+    const updateCriteria = async () => {
+        if (!criteriaValid) return;
+
+        const url = `/judge/criteria/${project?.project_id}`;
+        const res = await putRequest<OkResponse>(url, 'judge', {
+            criteria_rating: criteriaRating,
+        });
+        if (res.status !== 200) {
+            errorAlert(res);
+        }
+    };
+
+    // Update criteria with a delay for typing
+    useEffect(() => {
+        if (!project || !criteriaValid) return;
+
+        const delayDebounceFn = setTimeout(updateCriteria, 1000);
+
+        return () => {
+            clearTimeout(delayDebounceFn);
+        };
+    }, [criteriaRating]);
+
     if (!project) return <div>Loading...</div>;
 
     return (
@@ -91,12 +126,22 @@ const Project = () => {
                         Star projects you think should win the top places in the hackathon.
                     </p>
                 </div>
+                <div className="mb-6">
+                    <h2 className="text-2xl font-bold text-dark mb-2">Criteria Ratings</h2>
+                    <CriteriaRatingForm
+                        rating={criteriaRating}
+                        onRatingChange={setCriteriaRating}
+                        onValidChange={setCriteriaValid}
+                        disabled={false}
+                    />
+                </div>
                 <TextArea
                     label="Personal Notes"
                     value={notes}
                     setValue={setNotes}
                     className="mb-4"
                 />
+                <h2 className="text-2xl font-bold text-dark mb-2">Project Description</h2>
                 <Paragraph text={project.description} className="text-black" />
             </Container>
         </>

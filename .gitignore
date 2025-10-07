@@ -1,6 +1,7 @@
 target
 .target
 *.env
+*.env.dev
 data
 .cargo
 .vscode
@@ -12,3 +13,7 @@ test-log.txt
 # If someone accidentally makes these in root
 node_modules
 yarn.lock
+
+CLAUDE.md
+
+plan/
