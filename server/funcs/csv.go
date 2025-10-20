@@ -395,7 +395,9 @@ func CreateProjectChallengeZip(projects []*models.Project) ([]byte, error) {
 
 	// Write each CSV to the zip file
 	for i, csv := range csvList {
-		f, err := w.Create(fmt.Sprintf("%s.csv", challengeList[i]))
+		// Sanitize the challenge name for use as a filename
+		safeFilename := sanitizeFilename(challengeList[i])
+		f, err := w.Create(fmt.Sprintf("%s.csv", safeFilename))
 		if err != nil {
 			return nil, err
 		}
@@ -423,4 +425,36 @@ func contains(list []string, str string) bool {
 		}
 	}
 	return false
+}
+
+// sanitizeFilename removes or replaces characters that are invalid in filenames
+func sanitizeFilename(name string) string {
+	// Replace characters that are problematic in filenames
+	replacements := map[string]string{
+		"/":  "-",  // Path separator
+		"\\": "-",  // Windows path separator
+		":":  "-",  // Drive separator (Windows) / special char (macOS)
+		"*":  "",   // Wildcard
+		"?":  "",   // Wildcard
+		"\"": "",   // Quote
+		"<":  "",   // Redirect
+		">":  "",   // Redirect
+		"|":  "-",  // Pipe
+		"&":  "and", // Ampersand
+	}
+
+	result := name
+	for old, new := range replacements {
+		result = strings.ReplaceAll(result, old, new)
+	}
+
+	// Trim spaces and dots from start/end (problematic on Windows)
+	result = strings.Trim(result, " .")
+
+	// If result is empty after sanitization, use a default name
+	if result == "" {
+		result = "unnamed"
+	}
+
+	return result
 }

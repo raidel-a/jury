@@ -19,6 +19,10 @@ func NewRouter(db *mongo.Database, logger *logging.Logger) *gin.Engine {
 	// Create the router
 	router := gin.Default()
 
+	// Enable handling of URL-encoded path parameters (e.g., %2F for /)
+	router.UseRawPath = true
+	router.UnescapePathValues = true
+
 	// Get the clock state from the database
 	clock := getClockFromDb(db)
 

@@ -128,7 +128,7 @@ const Expo = () => {
                     selected={track}
                     setSelected={setTrack}
                     onChange={(t) => {
-                        navigate('/expo/' + t.replace(/\s/g, '%20'));
+                        navigate('/expo/' + encodeURIComponent(t));
                     }}
                     options={challenges ?? []}
                     className="my-2 md:mx-0 mx-4"

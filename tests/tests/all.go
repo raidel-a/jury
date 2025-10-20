@@ -22,6 +22,16 @@ func RunTests(context *src.Context) {
 				"Get Clock":            GetClock,
 			},
 		},
+		{
+			Name: "Special Characters in Track/Challenge Names",
+			Tests: map[string]func(*src.Context) src.Result{
+				"Track QR Code Generation":        TestTrackQRCodeGeneration,
+				"Track QR Code Check":             TestTrackQRCodeCheck,
+				"Add Judge with Special Track":    TestAddJudgeWithTrack,
+				"Project Export with Special Chars": TestProjectExportWithSpecialChars,
+				"Stats with Special Char Tracks":  TestGetStatsWithSpecialChars,
+			},
+		},
 	}
 
 	// Loop through each test group and run each test in the group
